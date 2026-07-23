@@ -19,20 +19,24 @@
             color: #ecf0f1;
             user-select: none;
             overflow: hidden;
+            padding: 10px;
+            box-sizing: border-box;
         }
 
         h1 {
             font-family: 'Press Start 2P', cursive;
-            font-size: clamp(16px, 3vw, 24px);
+            font-size: clamp(14px, 3vw, 24px);
             margin-bottom: 10px;
             color: #f1c40f;
             text-shadow: 2px 2px #000;
+            text-align: center;
         }
 
         #game-container {
             width: 100%;
-            max-width: 85vh;
-            padding: 0 15px;
+            /* Fixes the overflow issue by capping width to 60% of viewport height */
+            max-width: min(90vw, 60vh); 
+            padding: 0 5px;
             box-sizing: border-box;
         }
 
@@ -99,7 +103,7 @@
             color: white;
             border: 2px solid #c0392b;
             padding: 10px 20px;
-            margin: 10px;
+            margin: 5px;
             font-size: 12px;
             cursor: pointer;
             box-shadow: 3px 3px 0px #000;
@@ -123,8 +127,8 @@
         }
 
         .instructions {
-            margin-top: 15px;
-            font-size: 14px;
+            margin-top: 10px;
+            font-size: 12px;
             color: #bdc3c7;
             text-align: center;
             line-height: 1.4;
@@ -173,12 +177,12 @@
 
     <div class="instructions">
         Use <kbd>Arrows</kbd> to move. Wraps through edges.<br>
-        <div class="powerup-guide" style="margin-top:5px; font-size: 12px;">
-            <span style="color:#e74c3c;">Grow (Red)</span>
-            <span style="color:#3498db;">Shrink (Blue)</span>
-            <span style="color:#f1c40f;">Fast (Yel)</span>
-            <span style="color:#00ffff;">Slow (Cyan)</span>
-            <span style="color:#fff;">Ghost (Wht)</span>
+        <div class="powerup-guide" style="margin-top:5px; font-size: 11px;">
+            <span style="color:#e74c3c;">Grow(Red)</span>
+            <span style="color:#3498db;">Shrink(Blu)</span>
+            <span style="color:#f1c40f;">Fast(Yel)</span>
+            <span style="color:#00ffff;">Slow(Cyn)</span>
+            <span style="color:#fff;">Ghost(Wht)</span>
         </div>
     </div>
 
@@ -202,8 +206,12 @@
         let growQueue = 0;
         let highScore = localStorage.getItem('snakeHighScore') || 0;
 
+        // Bonus Level State
+        let isBonusLevel = false;
+        let exitX = -100, exitY = -100;
+
         // Powerup State
-        let currentPowerUp = null; // {x, y, type}
+        let currentPowerUp = null; // {x, y, type, spawnTick}
         let activeEffect = { type: null, ticksRemaining: 0 }; 
         const POWERUP_TYPES = ['shrink', 'grow', 'slow', 'fast', 'ghost'];
 
@@ -216,10 +224,8 @@
             { name: "Stone", bg: "#757575", accent: "#616161", snakeHead: "#4a148c", snakeBody: "#9c27b0", food: "#64dd17", foodLeaf: "#1b5e20" }
         ];
 
-        // Boot Game (Check for saves)
-        if (!loadState()) {
-            resetGame();
-        }
+        // Boot Game
+        if (!loadState()) resetGame();
 
         // Inputs
         document.addEventListener("keydown", changeDirection);
@@ -232,7 +238,7 @@
         btnResume.addEventListener("click", togglePause);
         btnRestart.addEventListener("click", resetGame);
 
-        // Auto-pause and Save on tab switch / window close
+        // Auto-pause and Save
         document.addEventListener("visibilitychange", () => {
             if (document.hidden && !isGameOver) {
                 if (!isPaused) togglePause();
@@ -259,7 +265,7 @@
             const state = {
                 snake, dx, dy, foodX, foodY, score, levelScore, level,
                 obstacles, movingObstacles, baseGameSpeed, currentPowerUp, 
-                activeEffect, tickCounter, growQueue
+                activeEffect, tickCounter, growQueue, isBonusLevel, exitX, exitY
             };
             localStorage.setItem('snakeSaveData', JSON.stringify(state));
         }
@@ -276,6 +282,8 @@
                     baseGameSpeed = state.baseGameSpeed; currentPowerUp = state.currentPowerUp;
                     activeEffect = state.activeEffect || { type: null, ticksRemaining: 0 };
                     tickCounter = state.tickCounter; growQueue = state.growQueue || 0;
+                    isBonusLevel = state.isBonusLevel || false;
+                    exitX = state.exitX || -100; exitY = state.exitY || -100;
                     
                     document.getElementById('score').innerText = score;
                     document.getElementById('level').innerText = level;
@@ -309,6 +317,7 @@
         function main() {
             if (isGameOver || isPaused) return;
 
+            // In bonus levels, level score is only set to 100 when hitting the exit portal.
             if (levelScore >= 100) {
                 level++;
                 if (level > 100) { endGame("VICTORY!"); return; }
@@ -327,19 +336,28 @@
                 if (activeEffect.ticksRemaining <= 0) activeEffect.type = null;
             }
 
-            // Periodically save state in background (every ~20 ticks)
+            // Despawn power up if it sits for ~100 ticks (approx 7-10 seconds depending on speed)
+            if (currentPowerUp && (tickCounter - currentPowerUp.spawnTick > 100)) {
+                currentPowerUp = null;
+            }
+
+            // Auto-save every 20 ticks
             if (tickCounter % 20 === 0) saveState();
 
             gameLoop = setTimeout(function onTick() {
                 if (isPaused) return; 
                 tickCounter++;
                 drawBackground();
+                
+                if (isBonusLevel) drawExitPortal();
+                
                 updateMovingObstacles();
                 drawObstacles();
                 drawPowerUp();
                 drawFood();
                 advanceSnake();
                 drawSnake();
+                drawHUD(); // Draws powerup timers and bonus text
                 
                 if (hasGameEnded()) {
                     endGame("GAME OVER");
@@ -373,7 +391,7 @@
         function endGame(title) {
             isGameOver = true;
             clearTimeout(gameLoop);
-            localStorage.removeItem('snakeSaveData'); // Clear save on death
+            localStorage.removeItem('snakeSaveData'); 
             
             if (score > highScore) {
                 highScore = score;
@@ -395,6 +413,8 @@
             activeEffect = { type: null, ticksRemaining: 0 };
             document.getElementById('level').innerText = level;
             
+            isBonusLevel = (level > 0 && level % 5 === 0);
+            
             const currentBiome = biomes[(level - 1) % biomes.length];
             generateBackgroundPattern(currentBiome);
             
@@ -405,7 +425,12 @@
                 dx = 10; dy = 0; growQueue = 0;
             }
             
-            generateHardObstacles();
+            if (isBonusLevel) {
+                generateBonusMaze();
+            } else {
+                generateHardObstacles();
+            }
+            
             genFood();
             main();
         }
@@ -415,14 +440,67 @@
             ctx.fillRect(0, 0, canvas.width, canvas.height);
         }
 
+        function drawExitPortal() {
+            // Pulsing purple portal
+            let pulse = Math.abs(Math.sin(tickCounter * 0.2)) * 4;
+            
+            ctx.shadowBlur = 15;
+            ctx.shadowColor = "#9b59b6";
+            
+            ctx.fillStyle = "#8e44ad";
+            ctx.fillRect(exitX - (pulse/2), exitY - (pulse/2), 10 + pulse, 10 + pulse);
+            
+            ctx.fillStyle = "#e056fd";
+            ctx.fillRect(exitX + 2, exitY + 2, 6, 6);
+            
+            ctx.shadowBlur = 0; // reset
+        }
+
+        function drawHUD() {
+            // Bonus Level Indicator
+            if (isBonusLevel) {
+                ctx.fillStyle = "#f1c40f";
+                ctx.font = "10px 'Press Start 2P'";
+                ctx.textAlign = "center";
+                ctx.shadowBlur = 5;
+                ctx.shadowColor = "#000";
+                ctx.fillText("BONUS MAZE: FIND EXIT!", canvas.width/2, 20);
+                ctx.shadowBlur = 0;
+            }
+            
+            // Power Up Timer/Text
+            if (activeEffect.type && activeEffect.ticksRemaining > 0) {
+                ctx.font = "12px 'Press Start 2P'";
+                ctx.textAlign = "center";
+                ctx.shadowBlur = 5;
+                ctx.shadowColor = "#000";
+                
+                let color = "white";
+                let text = "";
+                // Estimate seconds left based on average tick speed (approx 10 ticks = 1 sec)
+                let timeSec = Math.ceil(activeEffect.ticksRemaining / (1000 / baseGameSpeed));
+                
+                if (activeEffect.type === 'grow') { color = "#e74c3c"; text = "GROWN!"; }
+                else if (activeEffect.type === 'shrink') { color = "#3498db"; text = "SHRUNK!"; }
+                else if (activeEffect.type === 'fast') { color = "#f1c40f"; text = `FAST: ${timeSec}s`; }
+                else if (activeEffect.type === 'slow') { color = "#00ffff"; text = `SLOW: ${timeSec}s`; }
+                else if (activeEffect.type === 'ghost') { color = "#ffffff"; text = `GHOST: ${timeSec}s`; }
+                
+                ctx.fillStyle = color;
+                ctx.fillText(text, canvas.width/2, isBonusLevel ? 40 : 20);
+                
+                ctx.textAlign = "left";
+                ctx.shadowBlur = 0;
+            }
+        }
+
         function drawSnake() {
             const currentBiome = biomes[(level - 1) % biomes.length];
             snake.forEach((part, index) => {
                 ctx.fillStyle = index === 0 ? currentBiome.snakeHead : currentBiome.snakeBody;
                 
-                // Ghost effect makes snake slightly transparent
                 if (activeEffect.type === 'ghost' && activeEffect.ticksRemaining > 0) {
-                    ctx.globalAlpha = 0.8;
+                    ctx.globalAlpha = 0.7; // Ghost transparency
                 }
                 
                 ctx.beginPath();
@@ -441,9 +519,8 @@
         }
 
         function drawObstacles() {
-            // If ghost powerup active, obstacles become heavily transparent
             if (activeEffect.type === 'ghost' && activeEffect.ticksRemaining > 0) {
-                ctx.globalAlpha = 0.25;
+                ctx.globalAlpha = 0.25; // Dim walls if ghosted
             }
 
             obstacles.forEach(obs => {
@@ -482,8 +559,10 @@
             else if (currentPowerUp.type === 'slow') color = "#00ffff"; // Cyan
             else if (currentPowerUp.type === 'ghost') color = "#ffffff"; // White
 
-            // Pulsing effect
-            let pulse = Math.abs(Math.sin(tickCounter * 0.2)) * 3;
+            // Pulse based on life remaining to warn player it's about to despawn
+            let lifeLeft = 100 - (tickCounter - currentPowerUp.spawnTick);
+            let pulseSpeed = lifeLeft < 30 ? 0.8 : 0.2; // flashes fast when dying
+            let pulse = Math.abs(Math.sin(tickCounter * pulseSpeed)) * 3;
             
             ctx.shadowBlur = 10;
             ctx.shadowColor = color;
@@ -491,24 +570,23 @@
             ctx.beginPath();
             ctx.arc(currentPowerUp.x + 5, currentPowerUp.y + 5, 4 + pulse, 0, Math.PI * 2);
             ctx.fill();
-            ctx.shadowBlur = 0; // reset
+            ctx.shadowBlur = 0; 
         }
 
         function drawFood() {
             const currentBiome = biomes[(level - 1) % biomes.length];
-            const isLastFruit = (levelScore === 90);
+            const isLastFruit = (!isBonusLevel && levelScore === 90);
             
             let scale = 1;
             let pulseOffset = 0;
             
             if (isLastFruit) {
-                scale = 1.5; // Make it 50% bigger
-                pulseOffset = Math.abs(Math.sin(tickCounter * 0.15)) * 2; // Pulsing effect
+                scale = 1.5; // Big boss fruit
+                pulseOffset = Math.abs(Math.sin(tickCounter * 0.15)) * 2;
                 ctx.shadowBlur = 15;
                 ctx.shadowColor = "#f1c40f";
             }
 
-            // Center alignment based on scale
             let cx = foodX + 5;
             let cy = foodY + 5;
             let r = (4 * scale) + pulseOffset;
@@ -523,7 +601,7 @@
             ctx.ellipse(cx + (2*scale), cy - (3*scale), 3*scale, 1.5*scale, Math.PI / 4, 0, Math.PI * 2);
             ctx.fill();
 
-            ctx.shadowBlur = 0; // reset
+            ctx.shadowBlur = 0;
         }
 
         function advanceSnake() {
@@ -536,21 +614,26 @@
             else if (head.y >= canvas.height) head.y = 0;
 
             snake.unshift(head);
+            
+            // Check Bonus Exit Portal Collision
+            if (isBonusLevel && Math.abs(head.x - exitX) < 10 && Math.abs(head.y - exitY) < 10) {
+                levelScore = 100; // Triggers level up
+                snake.pop(); // keep length stable during transition
+                return;
+            }
 
             // Food collision
             if (head.x === foodX && head.y === foodY) {
                 score += 10;
-                levelScore += 10;
+                // Only normal levels advance via food
+                if (!isBonusLevel) levelScore += 10; 
                 document.getElementById('score').innerText = score;
                 
-                // 25% chance to spawn a powerup if one doesn't exist
-                if (!currentPowerUp && Math.random() < 0.25 && levelScore < 90) {
+                if (!currentPowerUp && Math.random() < 0.25) {
                     genPowerUp();
                 }
-                
-                if (levelScore < 100) genFood();
+                genFood();
             } else if (growQueue > 0) {
-                // If growing from a powerup, don't pop the tail
                 growQueue--;
             } else {
                 snake.pop();
@@ -565,13 +648,13 @@
 
         function applyPowerUp(type) {
             if (type === 'shrink') {
-                // Cut length in half (keep minimum 3)
                 snake = snake.slice(0, Math.max(3, Math.floor(snake.length / 2)));
+                activeEffect = { type: type, ticksRemaining: 20 }; // Shows text briefly
             } else if (type === 'grow') {
                 growQueue += 5; 
+                activeEffect = { type: type, ticksRemaining: 20 }; // Shows text briefly
             } else {
-                // Temporal effects (last for roughly 8-10 seconds depending on speed)
-                activeEffect = { type: type, ticksRemaining: 80 };
+                activeEffect = { type: type, ticksRemaining: 100 }; // 100 ticks ~ 8 to 10 seconds
             }
         }
 
@@ -592,48 +675,73 @@
             let onObstacle = obstacles.some(o => o.x === x && o.y === y);
             let onMoving = movingObstacles.some(m => Math.abs(m.x - x) < 10 && Math.abs(m.y - y) < 10);
             let onFood = (x === foodX && y === foodY); 
-            return onSnake || onObstacle || onMoving || onFood;
+            let onExit = isBonusLevel && (Math.abs(x - exitX) < 20 && Math.abs(y - exitY) < 20); // Keep radius clear around exit
+            return onSnake || onObstacle || onMoving || onFood || onExit;
         }
 
         function genFood() {
-            let newX, newY;
-            let attempts = 0;
-            
-            // Loop until we find a safe spot, cap at 200 attempts to prevent browser freezing
+            let newX, newY, attempts = 0;
             do {
                 newX = randomTen(0, canvas.width - 10);
                 newY = randomTen(0, canvas.height - 10);
                 attempts++;
             } while (isOccupied(newX, newY) && attempts < 200);
-            
-            // Only assign to the actual food variables once we know it's a safe spot
-            foodX = newX;
-            foodY = newY;
+            foodX = newX; foodY = newY;
         }
 
         function genPowerUp() {
-            let px, py;
-            let attempts = 0;
-            
+            let px, py, attempts = 0;
             do {
                 px = randomTen(0, canvas.width - 10);
                 py = randomTen(0, canvas.height - 10);
                 attempts++;
             } while (isOccupied(px, py) && attempts < 200);
             
-            if (attempts < 200) { // Only spawn if a safe spot was actually found
+            if (attempts < 200) {
                 let type = POWERUP_TYPES[Math.floor(Math.random() * POWERUP_TYPES.length)];
-                currentPowerUp = { x: px, y: py, type: type };
+                currentPowerUp = { x: px, y: py, type: type, spawnTick: tickCounter };
             }
         }
 
         function isSafeSpawn(x, y) {
             if (snake.some(p => p.x === x && p.y === y)) return false;
-            // Prevent spawning immediately in front of or around the starting snake
             let head = snake[0];
             let dist = Math.abs(head.x - x) + Math.abs(head.y - y);
             if (dist < 50) return false;
             return true;
+        }
+
+        function generateBonusMaze() {
+            obstacles = [];
+            movingObstacles = [];
+            
+            // Build Outer Walls (With small wrapped holes so you don't get fully trapped)
+            for(let i=0; i<40; i++) {
+                if (i !== 5 && i !== 35) obstacles.push({x: i*10, y: 0});
+                if (i !== 5 && i !== 35) obstacles.push({x: i*10, y: 390});
+                if (i !== 5 && i !== 35) obstacles.push({x: 0, y: i*10});
+                if (i !== 5 && i !== 35) obstacles.push({x: 390, y: i*10});
+            }
+            
+            // Build an "S" shaped heavy maze
+            for(let i=0; i<32; i++) {
+                obstacles.push({x: i*10, y: 100}); // Top horizontal wall (gaps right)
+                obstacles.push({x: i*10, y: 110}); // Make it 2 blocks thick
+                
+                obstacles.push({x: 400 - (i*10) - 10, y: 200}); // Middle horizontal wall (gaps left)
+                obstacles.push({x: 400 - (i*10) - 10, y: 210}); 
+                
+                obstacles.push({x: i*10, y: 300}); // Bottom horizontal wall (gaps right)
+                obstacles.push({x: i*10, y: 310}); 
+            }
+            
+            // Safe spawn at top-left, moving right
+            snake = [{x: 40, y: 50}, {x: 30, y: 50}, {x: 20, y: 50}];
+            dx = 10; dy = 0;
+            
+            // Place Exit portal in bottom right
+            exitX = 360; 
+            exitY = 360;
         }
 
         function generateHardObstacles() {
@@ -647,7 +755,6 @@
                 }
             };
 
-            // Build dense shapes rather than random blocks
             const drawLine = (x1, y1, length, isHorizontal) => {
                 for(let i=0; i<length; i++) {
                     if (isHorizontal) add(x1 + i, y1);
@@ -660,31 +767,24 @@
             };
 
             if (difficulty === 0) {
-                // Tier 1: Small random walls
                 for(let i=0; i<5; i++) drawLine(Math.floor(Math.random()*35), Math.floor(Math.random()*35), 4, Math.random()>0.5);
             } else if (difficulty === 1) {
-                // Tier 2: Corner L-shapes
                 drawLine(2, 2, 10, true); drawLine(2, 2, 10, false);
                 drawLine(28, 37, 10, true); drawLine(37, 28, 10, false);
                 drawLine(28, 2, 10, true); drawLine(37, 2, 10, false);
             } else if (difficulty === 2) {
-                // Tier 3: Dense Corridors
                 drawLine(8, 0, 15, false); drawLine(32, 25, 15, false);
                 drawLine(15, 15, 10, true); drawLine(15, 25, 10, true);
             } else if (difficulty === 3) {
-                // Tier 4: Concentric broken boxes
                 drawBox(5, 5, 30, 30);
-                // Break holes so snake can pass
                 obstacles = obstacles.filter(o => !(o.x === 200 && o.y === 50) && !(o.x === 200 && o.y === 340));
             } else if (difficulty === 4) {
-                // Tier 5: Plus signs
                 for(let mx of [10, 30]) {
                     for(let my of [10, 30]) {
                         drawLine(mx-3, my, 7, true); drawLine(mx, my-3, 7, false);
                     }
                 }
             } else if (difficulty >= 5) {
-                // Tier 6+: Heavy Mazes
                 for(let i=0; i<8; i++) {
                     let rx = Math.floor(Math.random()*30);
                     let ry = Math.floor(Math.random()*30);
@@ -693,15 +793,15 @@
                 }
             }
 
-            // Moving Spikes
             if (difficulty >= 2) {
                 let numCrawlers = difficulty * 2; 
                 for(let i=0; i < numCrawlers; i++) {
-                    let mx, my;
+                    let mx, my, attempts = 0;
                     do {
                         mx = randomTen(0, canvas.width - 10);
                         my = randomTen(0, canvas.height - 10);
-                    } while (!isSafeSpawn(mx, my));
+                        attempts++;
+                    } while (!isSafeSpawn(mx, my) && attempts < 200);
                     
                     movingObstacles.push({ x: mx, y: my, dx: Math.random() > 0.5 ? 10 : -10 });
                 }
@@ -723,12 +823,12 @@
         }
 
         function hasGameEnded() {
-            // Self-collision (always active)
+            // Self-collision
             for (let i = 4; i < snake.length; i++) {
                 if (snake[i].x === snake[0].x && snake[i].y === snake[0].y) return true;
             }
             
-            // Wall/Spike collision (bypassed if Ghost powerup is active)
+            // Check Walls/Spikes only if NOT ghosted
             if (activeEffect.type !== 'ghost' || activeEffect.ticksRemaining <= 0) {
                 for (let i = 0; i < obstacles.length; i++) {
                     if (obstacles[i].x === snake[0].x && obstacles[i].y === snake[0].y) return true;
