@@ -12,7 +12,7 @@
             flex-direction: column;
             align-items: center;
             justify-content: center;
-            height: 100vh;
+            min-height: 100vh;
             margin: 0;
             background-color: #2c3e50;
             font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
@@ -25,8 +25,8 @@
 
         h1 {
             font-family: 'Press Start 2P', cursive;
-            font-size: clamp(14px, 3vw, 24px);
-            margin-bottom: 10px;
+            font-size: clamp(14px, 2.5vw, 24px);
+            margin-bottom: 15px;
             color: #f1c40f;
             text-shadow: 2px 2px #000;
             text-align: center;
@@ -34,8 +34,8 @@
 
         #game-container {
             width: 100%;
-            /* Fixes the overflow issue by capping width to 60% of viewport height */
-            max-width: min(90vw, 60vh); 
+            /* Widescreen fix: caps width based on viewport to maintain 2:1 aspect ratio */
+            max-width: min(95vw, 140vh); 
             padding: 0 5px;
             box-sizing: border-box;
         }
@@ -44,7 +44,7 @@
             display: flex;
             justify-content: space-between;
             font-family: 'Press Start 2P', cursive;
-            font-size: clamp(8px, 1.5vw, 12px);
+            font-size: clamp(8px, 1.2vw, 12px);
             margin-bottom: 10px;
             color: #ecf0f1;
         }
@@ -55,12 +55,14 @@
             border-radius: 5px;
             border: 2px solid #16a085;
             box-shadow: 2px 2px 0px #000;
+            display: flex;
+            align-items: center;
         }
 
         #canvas-wrapper {
             position: relative;
             width: 100%;
-            aspect-ratio: 1 / 1;
+            aspect-ratio: 2 / 1; /* Changed to Widescreen 2:1 */
             background-color: #000;
             border: 4px solid #34495e;
             border-radius: 10px;
@@ -102,9 +104,9 @@
             background: #e74c3c;
             color: white;
             border: 2px solid #c0392b;
-            padding: 10px 20px;
+            padding: 10px 15px;
             margin: 5px;
-            font-size: 12px;
+            font-size: 10px;
             cursor: pointer;
             box-shadow: 3px 3px 0px #000;
             transition: transform 0.1s;
@@ -117,6 +119,8 @@
 
         .btn-green { background: #2ecc71; border-color: #27ae60; }
         .btn-blue { background: #3498db; border-color: #2980b9; }
+        .btn-dark { background: #34495e; border-color: #2c3e50; }
+        .btn-orange { background: #e67e22; border-color: #d35400; }
 
         .controls {
             margin-top: 15px;
@@ -124,6 +128,8 @@
             gap: 10px;
             flex-wrap: wrap;
             justify-content: center;
+            width: 100%;
+            max-width: 800px;
         }
 
         .instructions {
@@ -160,7 +166,8 @@
         </div>
         
         <div id="canvas-wrapper">
-            <canvas id="gameCanvas" width="400" height="400"></canvas>
+            <!-- Increased width to 800 for 2:1 widescreen -->
+            <canvas id="gameCanvas" width="800" height="400"></canvas>
             <div id="overlay">
                 <h2 id="overlay-title">PAUSED</h2>
                 <div id="final-score" style="display: none; font-family: 'Press Start 2P', cursive; margin-bottom: 20px; color: #f1c40f; font-size: 14px;"></div>
@@ -171,8 +178,11 @@
     </div>
     
     <div class="controls">
-        <button id="btn-pause-toggle" class="btn" style="padding: 8px 15px;">PAUSE (P)</button>
-        <button id="btn-fullscreen" class="btn btn-blue" style="padding: 8px 15px;">FULLSCREEN (F)</button>
+        <button id="btn-pause-toggle" class="btn">PAUSE (P)</button>
+        <button id="btn-music" class="btn btn-dark">🎵 MUSIC: ON</button>
+        <button id="btn-sfx" class="btn btn-dark">🔊 SFX: ON</button>
+        <button id="btn-fullscreen" class="btn btn-blue">FULLSCREEN (F)</button>
+        <button id="btn-reset-high" class="btn btn-orange">RESET HIGH</button>
     </div>
 
     <div class="instructions">
@@ -211,11 +221,114 @@
         let exitX = -100, exitY = -100;
 
         // Powerup State
-        let currentPowerUp = null; // {x, y, type, spawnTick}
+        let currentPowerUp = null;
         let activeEffect = { type: null, ticksRemaining: 0 }; 
         const POWERUP_TYPES = ['shrink', 'grow', 'slow', 'fast', 'ghost'];
 
         document.getElementById('high-score').innerText = highScore;
+
+        // --- AUDIO ENGINE ---
+        let audioCtx;
+        let sfxEnabled = true;
+        let musicEnabled = true;
+        let jazzTimer;
+        let jazzStep = 0;
+        // Swing bass notes (Frequencies)
+        const jazzNotes = [130.81, 0, 155.56, 155.56, 0, 196.00, 0, 155.56]; 
+
+        function initAudio() {
+            if (!audioCtx) {
+                audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+                scheduleJazz();
+            }
+            if (audioCtx.state === 'suspended') audioCtx.resume();
+        }
+
+        function playTone(freq, type, duration, vol=0.1) {
+            if (!sfxEnabled || !audioCtx) return;
+            let osc = audioCtx.createOscillator();
+            let gain = audioCtx.createGain();
+            osc.type = type;
+            osc.frequency.setValueAtTime(freq, audioCtx.currentTime);
+            gain.gain.setValueAtTime(vol, audioCtx.currentTime);
+            gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + duration);
+            osc.connect(gain);
+            gain.connect(audioCtx.destination);
+            osc.start();
+            osc.stop(audioCtx.currentTime + duration);
+        }
+
+        function playEatSFX() {
+            playTone(600, 'square', 0.1, 0.05);
+            setTimeout(() => playTone(900, 'square', 0.1, 0.05), 50);
+        }
+
+        function playPowerupSFX() {
+            playTone(400, 'sine', 0.1, 0.1);
+            setTimeout(() => playTone(600, 'sine', 0.1, 0.1), 80);
+            setTimeout(() => playTone(800, 'sine', 0.2, 0.1), 160);
+        }
+
+        function playDeathSFX() {
+            playTone(200, 'sawtooth', 0.3, 0.1);
+            setTimeout(() => playTone(150, 'sawtooth', 0.4, 0.1), 200);
+        }
+
+        function scheduleJazz() {
+            if (jazzTimer) clearInterval(jazzTimer);
+            jazzTimer = setInterval(() => {
+                if (musicEnabled && !isPaused && !isGameOver && audioCtx) {
+                    let freq = jazzNotes[jazzStep % jazzNotes.length];
+                    if (freq > 0) {
+                        // Bass
+                        let osc = audioCtx.createOscillator();
+                        let gain = audioCtx.createGain();
+                        osc.type = 'triangle';
+                        osc.frequency.value = freq;
+                        gain.gain.setValueAtTime(0.15, audioCtx.currentTime);
+                        gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.3);
+                        osc.connect(gain);
+                        gain.connect(audioCtx.destination);
+                        osc.start();
+                        osc.stop(audioCtx.currentTime + 0.3);
+                    }
+                    // Jazzy hi-hat on upbeat
+                    if (jazzStep % 2 !== 0) {
+                        let hh = audioCtx.createOscillator();
+                        let hGain = audioCtx.createGain();
+                        hh.type = 'square';
+                        hh.frequency.value = 8000; // White noise-ish
+                        hGain.gain.setValueAtTime(0.02, audioCtx.currentTime);
+                        hGain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.05);
+                        hh.connect(hGain);
+                        hGain.connect(audioCtx.destination);
+                        hh.start();
+                        hh.stop(audioCtx.currentTime + 0.05);
+                    }
+                    jazzStep++;
+                }
+            }, 300); // tempo
+        }
+
+        // --- BUTTON LISTENERS ---
+        document.getElementById("btn-music").addEventListener("click", (e) => {
+            initAudio();
+            musicEnabled = !musicEnabled;
+            e.target.innerText = musicEnabled ? "🎵 MUSIC: ON" : "🎵 MUSIC: OFF";
+        });
+        document.getElementById("btn-sfx").addEventListener("click", (e) => {
+            initAudio();
+            sfxEnabled = !sfxEnabled;
+            e.target.innerText = sfxEnabled ? "🔊 SFX: ON" : "🔊 SFX: OFF";
+        });
+        document.getElementById("btn-reset-high").addEventListener("click", () => {
+            if(confirm("Are you sure you want to reset your High Score?")) {
+                highScore = 0;
+                localStorage.setItem('snakeHighScore', 0);
+                document.getElementById('high-score').innerText = "0";
+            }
+        });
+
 
         const biomes = [
             { name: "Grass", bg: "#7cb342", accent: "#558b2f", snakeHead: "#0d47a1", snakeBody: "#1976d2", food: "#e74c3c", foodLeaf: "#2ecc71" },
@@ -224,21 +337,21 @@
             { name: "Stone", bg: "#757575", accent: "#616161", snakeHead: "#4a148c", snakeBody: "#9c27b0", food: "#64dd17", foodLeaf: "#1b5e20" }
         ];
 
-        // Boot Game
         if (!loadState()) resetGame();
 
         // Inputs
-        document.addEventListener("keydown", changeDirection);
         document.addEventListener("keydown", (e) => {
+            initAudio(); // Starts audio on first interaction
+            changeDirection(e);
             if(e.code === "KeyP") togglePause();
             if(e.code === "KeyF") toggleFullScreen();
         });
-        document.getElementById("btn-pause-toggle").addEventListener("click", togglePause);
-        document.getElementById("btn-fullscreen").addEventListener("click", toggleFullScreen);
-        btnResume.addEventListener("click", togglePause);
-        btnRestart.addEventListener("click", resetGame);
+        
+        document.getElementById("btn-pause-toggle").addEventListener("click", () => { initAudio(); togglePause(); });
+        document.getElementById("btn-fullscreen").addEventListener("click", () => { initAudio(); toggleFullScreen(); });
+        btnResume.addEventListener("click", () => { initAudio(); togglePause(); });
+        btnRestart.addEventListener("click", () => { initAudio(); resetGame(); });
 
-        // Auto-pause and Save
         document.addEventListener("visibilitychange", () => {
             if (document.hidden && !isGameOver) {
                 if (!isPaused) togglePause();
@@ -317,7 +430,6 @@
         function main() {
             if (isGameOver || isPaused) return;
 
-            // In bonus levels, level score is only set to 100 when hitting the exit portal.
             if (levelScore >= 100) {
                 level++;
                 if (level > 100) { endGame("VICTORY!"); return; }
@@ -327,7 +439,6 @@
 
             changingDirection = false;
             
-            // Apply speed modifiers
             let currentSpeed = baseGameSpeed;
             if (activeEffect.ticksRemaining > 0) {
                 if (activeEffect.type === 'slow') currentSpeed *= 1.8;
@@ -336,12 +447,10 @@
                 if (activeEffect.ticksRemaining <= 0) activeEffect.type = null;
             }
 
-            // Despawn power up if it sits for ~100 ticks (approx 7-10 seconds depending on speed)
             if (currentPowerUp && (tickCounter - currentPowerUp.spawnTick > 100)) {
                 currentPowerUp = null;
             }
 
-            // Auto-save every 20 ticks
             if (tickCounter % 20 === 0) saveState();
 
             gameLoop = setTimeout(function onTick() {
@@ -357,9 +466,10 @@
                 drawFood();
                 advanceSnake();
                 drawSnake();
-                drawHUD(); // Draws powerup timers and bonus text
+                drawHUD(); 
                 
                 if (hasGameEnded()) {
+                    playDeathSFX();
                     endGame("GAME OVER");
                     return;
                 }
@@ -421,7 +531,7 @@
             baseGameSpeed = Math.max(45, 110 - (level * 1.2)); 
             
             if (isFullReset) {
-                snake = [{x: 200, y: 200}, {x: 190, y: 200}, {x: 180, y: 200}];
+                snake = [{x: 400, y: 200}, {x: 390, y: 200}, {x: 380, y: 200}];
                 dx = 10; dy = 0; growQueue = 0;
             }
             
@@ -441,9 +551,7 @@
         }
 
         function drawExitPortal() {
-            // Pulsing purple portal
             let pulse = Math.abs(Math.sin(tickCounter * 0.2)) * 4;
-            
             ctx.shadowBlur = 15;
             ctx.shadowColor = "#9b59b6";
             
@@ -452,33 +560,29 @@
             
             ctx.fillStyle = "#e056fd";
             ctx.fillRect(exitX + 2, exitY + 2, 6, 6);
-            
-            ctx.shadowBlur = 0; // reset
+            ctx.shadowBlur = 0;
         }
 
         function drawHUD() {
-            // Bonus Level Indicator
             if (isBonusLevel) {
                 ctx.fillStyle = "#f1c40f";
-                ctx.font = "10px 'Press Start 2P'";
-                ctx.textAlign = "center";
-                ctx.shadowBlur = 5;
-                ctx.shadowColor = "#000";
-                ctx.fillText("BONUS MAZE: FIND EXIT!", canvas.width/2, 20);
-                ctx.shadowBlur = 0;
-            }
-            
-            // Power Up Timer/Text
-            if (activeEffect.type && activeEffect.ticksRemaining > 0) {
                 ctx.font = "12px 'Press Start 2P'";
                 ctx.textAlign = "center";
                 ctx.shadowBlur = 5;
                 ctx.shadowColor = "#000";
+                ctx.fillText("BONUS MAZE: FIND EXIT!", canvas.width/2, 30);
+                ctx.shadowBlur = 0;
+            }
+            
+            if (activeEffect.type && activeEffect.ticksRemaining > 0) {
+                ctx.font = "14px 'Press Start 2P'";
+                ctx.textAlign = "center";
+                ctx.shadowBlur = 5;
+                ctx.shadowColor = "#000";
                 
+                let timeSec = Math.ceil(activeEffect.ticksRemaining / (1000 / baseGameSpeed));
                 let color = "white";
                 let text = "";
-                // Estimate seconds left based on average tick speed (approx 10 ticks = 1 sec)
-                let timeSec = Math.ceil(activeEffect.ticksRemaining / (1000 / baseGameSpeed));
                 
                 if (activeEffect.type === 'grow') { color = "#e74c3c"; text = "GROWN!"; }
                 else if (activeEffect.type === 'shrink') { color = "#3498db"; text = "SHRUNK!"; }
@@ -487,7 +591,7 @@
                 else if (activeEffect.type === 'ghost') { color = "#ffffff"; text = `GHOST: ${timeSec}s`; }
                 
                 ctx.fillStyle = color;
-                ctx.fillText(text, canvas.width/2, isBonusLevel ? 40 : 20);
+                ctx.fillText(text, canvas.width/2, isBonusLevel ? 55 : 30);
                 
                 ctx.textAlign = "left";
                 ctx.shadowBlur = 0;
@@ -500,7 +604,7 @@
                 ctx.fillStyle = index === 0 ? currentBiome.snakeHead : currentBiome.snakeBody;
                 
                 if (activeEffect.type === 'ghost' && activeEffect.ticksRemaining > 0) {
-                    ctx.globalAlpha = 0.7; // Ghost transparency
+                    ctx.globalAlpha = 0.7; 
                 }
                 
                 ctx.beginPath();
@@ -520,7 +624,7 @@
 
         function drawObstacles() {
             if (activeEffect.type === 'ghost' && activeEffect.ticksRemaining > 0) {
-                ctx.globalAlpha = 0.25; // Dim walls if ghosted
+                ctx.globalAlpha = 0.25; 
             }
 
             obstacles.forEach(obs => {
@@ -553,23 +657,29 @@
             if (!currentPowerUp) return;
             
             let color;
-            if (currentPowerUp.type === 'grow') color = "#e74c3c"; // Red
-            else if (currentPowerUp.type === 'shrink') color = "#3498db"; // Blue
-            else if (currentPowerUp.type === 'fast') color = "#f1c40f"; // Yellow
-            else if (currentPowerUp.type === 'slow') color = "#00ffff"; // Cyan
-            else if (currentPowerUp.type === 'ghost') color = "#ffffff"; // White
+            if (currentPowerUp.type === 'grow') color = "#e74c3c";
+            else if (currentPowerUp.type === 'shrink') color = "#3498db"; 
+            else if (currentPowerUp.type === 'fast') color = "#f1c40f"; 
+            else if (currentPowerUp.type === 'slow') color = "#00ffff"; 
+            else if (currentPowerUp.type === 'ghost') color = "#ffffff"; 
 
-            // Pulse based on life remaining to warn player it's about to despawn
             let lifeLeft = 100 - (tickCounter - currentPowerUp.spawnTick);
-            let pulseSpeed = lifeLeft < 30 ? 0.8 : 0.2; // flashes fast when dying
+            let pulseSpeed = lifeLeft < 30 ? 0.8 : 0.2; 
             let pulse = Math.abs(Math.sin(tickCounter * pulseSpeed)) * 3;
             
-            ctx.shadowBlur = 10;
+            ctx.shadowBlur = 15;
             ctx.shadowColor = color;
             ctx.fillStyle = color;
+            
             ctx.beginPath();
             ctx.arc(currentPowerUp.x + 5, currentPowerUp.y + 5, 4 + pulse, 0, Math.PI * 2);
             ctx.fill();
+            
+            // Adding a crisp white outline so it never blends in
+            ctx.lineWidth = 2;
+            ctx.strokeStyle = "#ffffff";
+            ctx.stroke();
+
             ctx.shadowBlur = 0; 
         }
 
@@ -581,7 +691,7 @@
             let pulseOffset = 0;
             
             if (isLastFruit) {
-                scale = 1.5; // Big boss fruit
+                scale = 1.5; 
                 pulseOffset = Math.abs(Math.sin(tickCounter * 0.15)) * 2;
                 ctx.shadowBlur = 15;
                 ctx.shadowColor = "#f1c40f";
@@ -615,17 +725,15 @@
 
             snake.unshift(head);
             
-            // Check Bonus Exit Portal Collision
             if (isBonusLevel && Math.abs(head.x - exitX) < 10 && Math.abs(head.y - exitY) < 10) {
-                levelScore = 100; // Triggers level up
-                snake.pop(); // keep length stable during transition
+                levelScore = 100;
+                snake.pop(); 
                 return;
             }
 
-            // Food collision
             if (head.x === foodX && head.y === foodY) {
+                playEatSFX();
                 score += 10;
-                // Only normal levels advance via food
                 if (!isBonusLevel) levelScore += 10; 
                 document.getElementById('score').innerText = score;
                 
@@ -639,8 +747,8 @@
                 snake.pop();
             }
 
-            // Powerup collision
             if (currentPowerUp && head.x === currentPowerUp.x && head.y === currentPowerUp.y) {
+                playPowerupSFX();
                 applyPowerUp(currentPowerUp.type);
                 currentPowerUp = null;
             }
@@ -649,12 +757,12 @@
         function applyPowerUp(type) {
             if (type === 'shrink') {
                 snake = snake.slice(0, Math.max(3, Math.floor(snake.length / 2)));
-                activeEffect = { type: type, ticksRemaining: 20 }; // Shows text briefly
+                activeEffect = { type: type, ticksRemaining: 20 }; 
             } else if (type === 'grow') {
                 growQueue += 5; 
-                activeEffect = { type: type, ticksRemaining: 20 }; // Shows text briefly
+                activeEffect = { type: type, ticksRemaining: 20 }; 
             } else {
-                activeEffect = { type: type, ticksRemaining: 100 }; // 100 ticks ~ 8 to 10 seconds
+                activeEffect = { type: type, ticksRemaining: 100 }; 
             }
         }
 
@@ -675,7 +783,7 @@
             let onObstacle = obstacles.some(o => o.x === x && o.y === y);
             let onMoving = movingObstacles.some(m => Math.abs(m.x - x) < 10 && Math.abs(m.y - y) < 10);
             let onFood = (x === foodX && y === foodY); 
-            let onExit = isBonusLevel && (Math.abs(x - exitX) < 20 && Math.abs(y - exitY) < 20); // Keep radius clear around exit
+            let onExit = isBonusLevel && (Math.abs(x - exitX) < 20 && Math.abs(y - exitY) < 20);
             return onSnake || onObstacle || onMoving || onFood || onExit;
         }
 
@@ -707,7 +815,7 @@
             if (snake.some(p => p.x === x && p.y === y)) return false;
             let head = snake[0];
             let dist = Math.abs(head.x - x) + Math.abs(head.y - y);
-            if (dist < 50) return false;
+            if (dist < 80) return false; // Increased safe radius for widescreen
             return true;
         }
 
@@ -715,33 +823,33 @@
             obstacles = [];
             movingObstacles = [];
             
-            // Build Outer Walls (With small wrapped holes so you don't get fully trapped)
+            // Build Outer Walls 800x400
+            for(let i=0; i<80; i++) {
+                if (i !== 5 && i !== 75) obstacles.push({x: i*10, y: 0});
+                if (i !== 5 && i !== 75) obstacles.push({x: i*10, y: 390});
+            }
             for(let i=0; i<40; i++) {
-                if (i !== 5 && i !== 35) obstacles.push({x: i*10, y: 0});
-                if (i !== 5 && i !== 35) obstacles.push({x: i*10, y: 390});
                 if (i !== 5 && i !== 35) obstacles.push({x: 0, y: i*10});
-                if (i !== 5 && i !== 35) obstacles.push({x: 390, y: i*10});
+                if (i !== 5 && i !== 35) obstacles.push({x: 790, y: i*10});
             }
             
-            // Build an "S" shaped heavy maze
-            for(let i=0; i<32; i++) {
-                obstacles.push({x: i*10, y: 100}); // Top horizontal wall (gaps right)
-                obstacles.push({x: i*10, y: 110}); // Make it 2 blocks thick
+            // Build an "S" shaped heavy maze spanning the wide screen
+            for(let i=0; i<65; i++) {
+                obstacles.push({x: i*10, y: 100}); 
+                obstacles.push({x: i*10, y: 110}); 
                 
-                obstacles.push({x: 400 - (i*10) - 10, y: 200}); // Middle horizontal wall (gaps left)
-                obstacles.push({x: 400 - (i*10) - 10, y: 210}); 
+                obstacles.push({x: 800 - (i*10) - 10, y: 200}); 
+                obstacles.push({x: 800 - (i*10) - 10, y: 210}); 
                 
-                obstacles.push({x: i*10, y: 300}); // Bottom horizontal wall (gaps right)
+                obstacles.push({x: i*10, y: 300}); 
                 obstacles.push({x: i*10, y: 310}); 
             }
             
-            // Safe spawn at top-left, moving right
             snake = [{x: 40, y: 50}, {x: 30, y: 50}, {x: 20, y: 50}];
             dx = 10; dy = 0;
             
-            // Place Exit portal in bottom right
-            exitX = 360; 
-            exitY = 360;
+            exitX = 750; 
+            exitY = 350;
         }
 
         function generateHardObstacles() {
@@ -750,7 +858,7 @@
             let difficulty = Math.floor((level - 1) / 10); 
             
             const add = (x, y) => {
-                if (x >= 0 && x < 40 && y >= 0 && y < 40 && isSafeSpawn(x * 10, y * 10)) {
+                if (x >= 0 && x < 80 && y >= 0 && y < 40 && isSafeSpawn(x * 10, y * 10)) {
                     obstacles.push({x: x * 10, y: y * 10});
                 }
             };
@@ -767,34 +875,41 @@
             };
 
             if (difficulty === 0) {
-                for(let i=0; i<5; i++) drawLine(Math.floor(Math.random()*35), Math.floor(Math.random()*35), 4, Math.random()>0.5);
+                // Tier 1
+                for(let i=0; i<8; i++) drawLine(Math.floor(Math.random()*70), Math.floor(Math.random()*35), 6, Math.random()>0.5);
             } else if (difficulty === 1) {
-                drawLine(2, 2, 10, true); drawLine(2, 2, 10, false);
-                drawLine(28, 37, 10, true); drawLine(37, 28, 10, false);
-                drawLine(28, 2, 10, true); drawLine(37, 2, 10, false);
+                // Tier 2: Large Corner Blocks
+                drawBox(2, 2, 15, 15); drawBox(63, 23, 15, 15);
+                drawBox(63, 2, 15, 15); drawBox(2, 23, 15, 15);
             } else if (difficulty === 2) {
-                drawLine(8, 0, 15, false); drawLine(32, 25, 15, false);
-                drawLine(15, 15, 10, true); drawLine(15, 25, 10, true);
+                // Tier 3: Widescreen Corridors
+                drawLine(10, 0, 30, false); drawLine(70, 10, 30, false);
+                drawLine(25, 20, 30, true); drawLine(25, 30, 30, true);
             } else if (difficulty === 3) {
-                drawBox(5, 5, 30, 30);
-                obstacles = obstacles.filter(o => !(o.x === 200 && o.y === 50) && !(o.x === 200 && o.y === 340));
+                // Tier 4: Concentric broken boxes spanning center
+                drawBox(10, 5, 60, 30);
+                drawBox(15, 10, 50, 20);
+                // Cut holes for pathing
+                obstacles = obstacles.filter(o => !(o.y === 190 || o.y === 200 || o.x === 390 || o.x === 400));
             } else if (difficulty === 4) {
-                for(let mx of [10, 30]) {
+                // Tier 5: Massive crosshairs
+                for(let mx of [20, 40, 60]) {
                     for(let my of [10, 30]) {
-                        drawLine(mx-3, my, 7, true); drawLine(mx, my-3, 7, false);
+                        drawLine(mx-5, my, 11, true); drawLine(mx, my-5, 11, false);
                     }
                 }
             } else if (difficulty >= 5) {
-                for(let i=0; i<8; i++) {
-                    let rx = Math.floor(Math.random()*30);
+                // Tier 6: Heavy intense mazes across the 800px width
+                for(let i=0; i<15; i++) {
+                    let rx = Math.floor(Math.random()*70);
                     let ry = Math.floor(Math.random()*30);
-                    drawLine(rx, ry, Math.floor(Math.random()*6)+4, Math.random()>0.5);
-                    drawLine(rx, ry, Math.floor(Math.random()*6)+4, Math.random()>0.5);
+                    drawLine(rx, ry, Math.floor(Math.random()*8)+5, Math.random()>0.5);
+                    drawLine(rx, ry, Math.floor(Math.random()*8)+5, Math.random()>0.5);
                 }
             }
 
             if (difficulty >= 2) {
-                let numCrawlers = difficulty * 2; 
+                let numCrawlers = difficulty * 3; 
                 for(let i=0; i < numCrawlers; i++) {
                     let mx, my, attempts = 0;
                     do {
@@ -823,12 +938,10 @@
         }
 
         function hasGameEnded() {
-            // Self-collision
             for (let i = 4; i < snake.length; i++) {
                 if (snake[i].x === snake[0].x && snake[i].y === snake[0].y) return true;
             }
             
-            // Check Walls/Spikes only if NOT ghosted
             if (activeEffect.type !== 'ghost' || activeEffect.ticksRemaining <= 0) {
                 for (let i = 0; i < obstacles.length; i++) {
                     if (obstacles[i].x === snake[0].x && obstacles[i].y === snake[0].y) return true;
